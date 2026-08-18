@@ -1,0 +1,84 @@
+name: Build liumengyang Clash Verge
+
+on:
+  push:
+    branches:
+      - liumengyang-33332-v2.3.1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: short
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout v2.3.1 custom branch
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          save-if: false
+
+      - name: Install Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pnpm 9.13.2
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.13.2
+          run_install: false
+
+      - name: Install JavaScript dependencies
+        run: pnpm install
+
+      - name: Patch singleton port 33331 to 33332
+        shell: pwsh
+        run: |
+          $path = "src-tauri/src/config/verge.rs"
+          $old = "const SERVER_PORT: u16 = 33331;"
+          $new = "const SERVER_PORT: u16 = 33332;"
+          $content = Get-Content -Path $path -Raw
+          if (-not $content.Contains($old)) {
+            throw "Expected singleton port declaration not found: $old"
+          }
+          $content = $content.Replace($old, $new)
+          Set-Content -Path $path -Value $content -Encoding utf8
+          Select-String -Path $path -Pattern "SERVER_PORT: u16"
+
+      - name: Prepare Windows sidecars and resources
+        run: pnpm run prebuild x86_64-pc-windows-msvc
+
+      - name: Build Windows executable only
+        run: pnpm tauri build --target x86_64-pc-windows-msvc --no-bundle
+
+      - name: Verify custom executable
+        shell: pwsh
+        run: |
+          $exe = "src-tauri/target/x86_64-pc-windows-msvc/release/clash-verge.exe"
+          if (-not (Test-Path $exe)) {
+            throw "Custom clash-verge.exe was not produced"
+          }
+          Get-Item $exe | Format-List FullName,Length,LastWriteTime
+
+      - name: Upload liumengyang custom EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: clash-verge-liumengyang-33332-v2.3.1
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/clash-verge.exe
+          if-no-files-found: error
+          retention-days: 14
